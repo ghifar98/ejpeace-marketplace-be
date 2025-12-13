@@ -931,6 +931,32 @@ const addExternalIdToPurchasesTable = async () => {
   }
 };
 
+// Create event_images table to support unlimited images per event
+const createEventImagesTable = async () => {
+  const query = `
+    CREATE TABLE IF NOT EXISTS event_images (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_id INT NOT NULL,
+      image_url VARCHAR(500) NOT NULL,
+      position INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_event_id (event_id),
+      INDEX idx_position (position),
+      FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
+    )
+  `;
+
+  try {
+    await db.execute(query);
+    console.log("Event images table created or already exists");
+    return true;
+  } catch (error) {
+    console.error("Error creating event images table:", error.message);
+    return false;
+  }
+};
+
 // Update the initializeDatabase function to include the new functions
 const initializeDatabase = async () => {
   console.log("Initializing database...");
@@ -970,6 +996,7 @@ const initializeDatabase = async () => {
     await addVoucherTypeToVouchersTable(); // Add the new function
     await addTicketIdToOrderAddressesTable(); // Add ticket support to order addresses
     await addExternalIdToPurchasesTable(); // Add external_id for Xendit tracking
+    await createEventImagesTable(); // Create event images table for unlimited images per event
 
     console.log("Database initialization completed");
     return true;

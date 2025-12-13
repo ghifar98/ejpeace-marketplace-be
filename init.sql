@@ -15,6 +15,7 @@ DROP TABLE IF EXISTS `carts`;
 DROP TABLE IF EXISTS `tickets`;
 DROP TABLE IF EXISTS `purchases`;
 DROP TABLE IF EXISTS `vouchers`;
+DROP TABLE IF EXISTS `event_images`;
 DROP TABLE IF EXISTS `events`;
 DROP TABLE IF EXISTS `products`;
 DROP TABLE IF EXISTS `users`;
@@ -61,6 +62,17 @@ CREATE TABLE `events` (
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `deleted_at` DATETIME DEFAULT NULL
+);
+
+-- 3b. Event Images Table (for unlimited images per event)
+CREATE TABLE `event_images` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `event_id` INT NOT NULL,
+  `image_url` VARCHAR(500) NOT NULL,
+  `position` INT DEFAULT 0,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (`event_id`) REFERENCES `events`(`id`) ON DELETE CASCADE
 );
 
 -- 4. Vouchers Table
