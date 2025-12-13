@@ -1,5 +1,6 @@
 const db = require("../config/db.config");
 const Event = require("./Event.model");
+const EventImageRepository = require("./eventImage.repository");
 
 // Helper function to convert datetime to MySQL format
 const formatDateForMySQL = (dateString) => {
@@ -34,14 +35,13 @@ class EventRepository {
       end_date,
       location,
       price,
-      image, // Add image parameter
     } = eventData;
     const createdAt = new Date();
     const updatedAt = new Date();
 
     const query = `
-      INSERT INTO events (title, description, start_date, end_date, location, price, image, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO events (title, description, start_date, end_date, location, price, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -52,7 +52,6 @@ class EventRepository {
         formatDateForMySQL(end_date),
         location,
         price,
-        image, // Add image parameter
         createdAt,
         updatedAt,
       ]);
@@ -66,10 +65,10 @@ class EventRepository {
     }
   }
 
-  // Find event by ID
+  // Find event by ID (with images)
   static async findById(id) {
     const query = `
-      SELECT id, title, description, start_date, end_date, location, price, image, created_at, updated_at, deleted_at
+      SELECT id, title, description, start_date, end_date, location, price, created_at, updated_at, deleted_at
       FROM events
       WHERE id = ? AND deleted_at IS NULL
     `;
@@ -77,7 +76,15 @@ class EventRepository {
     try {
       const [rows] = await db.execute(query, [id]);
       if (rows.length === 0) return null;
-      return new Event(rows[0]);
+
+      // Load images from event_images table
+      const images = await EventImageRepository.findByEventId(id);
+      const eventData = {
+        ...rows[0],
+        images: images.map(img => img.toJSON())
+      };
+
+      return new Event(eventData);
     } catch (error) {
       // If it's a connection error, return null
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
@@ -88,10 +95,10 @@ class EventRepository {
     }
   }
 
-  // Get all events (excluding deleted ones)
+  // Get all events (excluding deleted ones, with images)
   static async findAll() {
     const query = `
-      SELECT id, title, description, start_date, end_date, location, price, image, created_at, updated_at
+      SELECT id, title, description, start_date, end_date, location, price, created_at, updated_at
       FROM events
       WHERE deleted_at IS NULL
       ORDER BY start_date ASC
@@ -99,7 +106,19 @@ class EventRepository {
 
     try {
       const [rows] = await db.execute(query);
-      return rows.map((row) => new Event(row));
+
+      // Load images for each event
+      const eventsWithImages = await Promise.all(
+        rows.map(async (row) => {
+          const images = await EventImageRepository.findByEventId(row.id);
+          return new Event({
+            ...row,
+            images: images.map(img => img.toJSON())
+          });
+        })
+      );
+
+      return eventsWithImages;
     } catch (error) {
       // If it's a connection error, return empty array
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
@@ -119,7 +138,6 @@ class EventRepository {
       "end_date",
       "location",
       "price",
-      "image",
     ];
     const updates = [];
     const values = [];

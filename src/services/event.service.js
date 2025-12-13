@@ -6,17 +6,9 @@ const getAllEvents = async () => {
   try {
     const events = await EventRepository.findAll();
 
-    // Filter events to only include those with valid image paths
+    // Convert events to JSON - images are now loaded from relation table
     const validEvents = events.map((event) => {
-      // Create a plain object from the Event instance
-      const eventObj = event.toJSON();
-
-      // If image path exists but file doesn't exist, remove the image path
-      if (eventObj.image && !imageExists(eventObj.image)) {
-        eventObj.image = null;
-      }
-
-      return eventObj;
+      return event.toJSON();
     });
 
     return validEvents;
@@ -36,15 +28,8 @@ const getEventById = async (id) => {
       return null;
     }
 
-    // Create a plain object from the Event instance
-    const eventObj = event.toJSON();
-
-    // If image path exists but file doesn't exist, remove the image path
-    if (eventObj.image && !imageExists(eventObj.image)) {
-      eventObj.image = null;
-    }
-
-    return eventObj;
+    // Return event with images from relation table
+    return event.toJSON();
   } catch (error) {
     if (error.message === "Database connection failed") {
       throw new Error("Service unavailable. Please try again later.");
@@ -69,7 +54,7 @@ const createEvent = async (eventData) => {
       throw new Error(validationErrors.join(", "));
     }
 
-    // Save event to database
+    // Save event to database (images are saved separately in controller)
     const eventId = await EventRepository.create({
       title: event.title,
       description: event.description,
@@ -77,11 +62,9 @@ const createEvent = async (eventData) => {
       end_date: event.end_date,
       location: event.location,
       price: event.price,
-      discount_percentage: event.discount_percentage,
-      image: event.image, // Add image to the data sent to repository
     });
 
-    // Return event data
+    // Return event data with ID
     return {
       id: eventId,
       title: event.title,
@@ -90,8 +73,7 @@ const createEvent = async (eventData) => {
       end_date: event.end_date,
       location: event.location,
       price: event.price,
-      discount_percentage: event.discount_percentage,
-      image: event.image, // Include image in the response
+      images: [], // Images are saved separately and will be loaded on next fetch
       created_at: event.created_at,
     };
   } catch (error) {
@@ -115,8 +97,18 @@ const updateEvent = async (id, eventData) => {
       throw new Error("Event not found");
     }
 
+    // Create merged event data for validation
+    const mergedData = {
+      title: eventData.title || existingEvent.title,
+      description: eventData.description !== undefined ? eventData.description : existingEvent.description,
+      start_date: eventData.start_date || existingEvent.start_date,
+      end_date: eventData.end_date || existingEvent.end_date,
+      location: eventData.location || existingEvent.location,
+      price: eventData.price !== undefined ? eventData.price : existingEvent.price,
+    };
+
     // Create event object for validation
-    const event = new Event(eventData);
+    const event = new Event(mergedData);
 
     // Validate event data
     const validationErrors = event.validate();
@@ -124,56 +116,24 @@ const updateEvent = async (id, eventData) => {
       throw new Error(validationErrors.join(", "));
     }
 
-    // --- DELETE OLD IMAGE IF NEW IMAGE PROVIDED ---
-    // Only verify and delete old image if a NEW image is being set
-    if (
-      eventData.image !== undefined &&
-      eventData.image !== existingEvent.image
-    ) {
-      try {
-        const fs = require("fs");
-        const path = require("path");
+    // Build update payload only with provided fields
+    const updatePayload = {};
+    if (eventData.title !== undefined) updatePayload.title = eventData.title;
+    if (eventData.description !== undefined) updatePayload.description = eventData.description;
+    if (eventData.start_date !== undefined) updatePayload.start_date = eventData.start_date;
+    if (eventData.end_date !== undefined) updatePayload.end_date = eventData.end_date;
+    if (eventData.location !== undefined) updatePayload.location = eventData.location;
+    if (eventData.price !== undefined) updatePayload.price = eventData.price;
 
-        const oldImage = existingEvent.image;
-        if (oldImage) {
-          // Extract filename from URL
-          const filename = oldImage.split("/").pop();
-          if (filename) {
-            const filePath = path.join(__dirname, "../../uploads", filename);
-            if (fs.existsSync(filePath)) {
-              fs.unlinkSync(filePath);
-              console.log(`[EventService] Deleted old image: ${filePath}`);
-            }
-          }
-        }
-      } catch (err) {
-        console.error("[EventService] Error deleting old image:", err);
+    // Only update if there are fields to update
+    if (Object.keys(updatePayload).length > 0) {
+      const updated = await EventRepository.update(id, updatePayload);
+      if (!updated) {
+        throw new Error("Failed to update event");
       }
     }
-    // ------------------------------------------------
 
-    const updatePayload = {
-      title: event.title,
-      description: event.description,
-      start_date: event.start_date,
-      end_date: event.end_date,
-      location: event.location,
-      price: event.price,
-      discount_percentage: event.discount_percentage,
-    };
-
-    // Only update image if it's provided in the input
-    if (eventData.image !== undefined) {
-      updatePayload.image = event.image;
-    }
-
-    // Update event
-    const updated = await EventRepository.update(id, updatePayload);
-    if (!updated) {
-      throw new Error("Failed to update event");
-    }
-
-    // Return updated event
+    // Return updated event (with images from relation table)
     const updatedEvent = await EventRepository.findById(id);
     return updatedEvent.toJSON();
   } catch (error) {

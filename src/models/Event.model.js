@@ -9,7 +9,8 @@ class Event {
     this.end_date = data.end_date;
     this.location = data.location;
     this.price = data.price || 0; // Original price
-    this.image = data.image || null; // Image URL or path
+    // Images will be loaded from event_images table (unlimited)
+    this.images = data.images || [];
     this.created_at = data.created_at || new Date();
     this.updated_at = data.updated_at || new Date();
     this.deleted_at = data.deleted_at || null;
@@ -71,8 +72,8 @@ class Event {
         style: "currency",
         currency: "IDR",
       }).format(this.price),
-      // Only include image if it exists and is not null
-      image: this.image && this.image.trim() !== "" ? this.image : null,
+      // Images from event_images table (unlimited)
+      images: this.images,
       created_at: this.created_at,
       updated_at: this.updated_at,
     };

@@ -1,4 +1,5 @@
 const eventService = require("../services/event.service");
+const EventImageRepository = require("../models/eventImage.repository");
 const {
   successResponse,
   errorResponse,
@@ -49,7 +50,7 @@ const createEvent = async (req, res) => {
       return validationErrorResponse(res, ["Request body is required"]);
     }
 
-    // Prepare event data
+    // Prepare event data (without images - images will be saved separately)
     const eventData = { ...req.body };
 
     // Handle files from different possible field names
@@ -74,22 +75,30 @@ const createEvent = async (req, res) => {
 
     console.log("Processed image files:", imageFiles.length);
 
-    // If files were uploaded, add the file paths to event data
+    // Create the event first
+    const event = await eventService.createEvent(eventData);
+
+    // If files were uploaded, save them to event_images table (UNLIMITED)
     if (imageFiles.length > 0) {
-      // For events, we'll store the first image as the main image
-      // (Events typically have one main image, but we support multiple for flexibility)
       const baseUrl =
         process.env.NODE_ENV === "production"
           ? "https://212.85.27.163"
           : `http://localhost:${process.env.PORT || 3000}`;
-      const imageUrl = `${baseUrl}/api/v1/uploads/${imageFiles[0].filename}`;
-      eventData.image = imageUrl;
-      console.log("Event image URL set:", imageUrl);
-    } else {
-      console.log("No files uploaded");
-    }
 
-    const event = await eventService.createEvent(eventData);
+      // Prepare images array for bulk insert
+      const imagesData = imageFiles.map((file, index) => ({
+        image_url: `${baseUrl}/api/v1/uploads/${file.filename}`,
+        position: index,
+      }));
+
+      // Save all images to event_images table
+      await EventImageRepository.createMany(event.id, imagesData);
+      console.log(`Saved ${imageFiles.length} images for event ${event.id}`);
+
+      // Reload event to include the images
+      const updatedEvent = await eventService.getEventById(event.id);
+      return successResponse(res, "Event created successfully", updatedEvent, 201);
+    }
 
     return successResponse(res, "Event created successfully", event, 201);
   } catch (error) {
@@ -141,7 +150,7 @@ const updateEvent = async (req, res) => {
       }
     }
 
-    // Prepare update data
+    // Prepare update data (without images)
     const updateData = { ...req.body };
 
     // Handle files from different possible field names
@@ -166,24 +175,37 @@ const updateEvent = async (req, res) => {
 
     console.log("Processed image files for update:", imageFiles.length);
 
-    // If files were uploaded, add the file path to update data
-    if (imageFiles.length > 0) {
-      // For events, we'll store the first image as the main image
-      const baseUrl =
-        process.env.NODE_ENV === "production"
-          ? "https://212.85.27.163"
-          : `http://localhost:${process.env.PORT || 3000}`;
-      const imageUrl = `${baseUrl}/api/v1/uploads/${imageFiles[0].filename}`;
-      updateData.image = imageUrl;
-      console.log("Event image URL set:", imageUrl);
-    } else {
-      console.log("No files uploaded");
-    }
-
+    // Update event data first
     const event = await eventService.updateEvent(id, updateData);
 
     if (!event) {
       return notFoundResponse(res, "Event not found");
+    }
+
+    // If files were uploaded, add them to event_images table (UNLIMITED)
+    // New images are ADDED to existing ones, not replacing
+    if (imageFiles.length > 0) {
+      const baseUrl =
+        process.env.NODE_ENV === "production"
+          ? "https://212.85.27.163"
+          : `http://localhost:${process.env.PORT || 3000}`;
+
+      // Get next position for new images
+      const nextPosition = await EventImageRepository.getNextPosition(id);
+
+      // Prepare images array for bulk insert
+      const imagesData = imageFiles.map((file, index) => ({
+        image_url: `${baseUrl}/api/v1/uploads/${file.filename}`,
+        position: nextPosition + index,
+      }));
+
+      // Save all new images to event_images table
+      await EventImageRepository.createMany(id, imagesData);
+      console.log(`Added ${imageFiles.length} new images for event ${id}`);
+
+      // Reload event to include all images
+      const updatedEvent = await eventService.getEventById(id);
+      return successResponse(res, "Event updated successfully", updatedEvent);
     }
 
     return successResponse(res, "Event updated successfully", event);
@@ -199,6 +221,10 @@ const updateEvent = async (req, res) => {
 const deleteEvent = async (req, res) => {
   try {
     const { id } = req.params;
+
+    // Delete all images for this event first
+    await EventImageRepository.deleteByEventId(id);
+
     const result = await eventService.deleteEvent(id);
 
     if (!result) {
@@ -214,10 +240,43 @@ const deleteEvent = async (req, res) => {
   }
 };
 
+// Delete individual event image
+const deleteEventImage = async (req, res) => {
+  try {
+    const { eventId, imageId } = req.params;
+
+    // Verify the image belongs to the event
+    const image = await EventImageRepository.findById(imageId);
+
+    if (!image) {
+      return notFoundResponse(res, "Image not found");
+    }
+
+    if (image.event_id != eventId) {
+      return errorResponse(res, "Image does not belong to this event", null, 400);
+    }
+
+    // Delete the image
+    const deleted = await EventImageRepository.delete(imageId);
+
+    if (!deleted) {
+      return errorResponse(res, "Failed to delete image", null, 500);
+    }
+
+    return successResponse(res, "Image deleted successfully", null);
+  } catch (error) {
+    if (error.message.includes("Service unavailable")) {
+      return serviceUnavailableResponse(res, "Failed to delete image");
+    }
+    return errorResponse(res, "Failed to delete image", error.message, 400);
+  }
+};
+
 module.exports = {
   getAllEvents,
   getEventById,
   createEvent,
   updateEvent,
   deleteEvent,
+  deleteEventImage,
 };

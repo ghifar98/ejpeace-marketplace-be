@@ -6,26 +6,9 @@ const getAllProducts = async () => {
   try {
     const products = await ProductRepository.findAll();
 
-    // Filter products to only include those with valid image paths
+    // Convert products to JSON - return images directly from database
     const validProducts = products.map((product) => {
-      // Create a plain object from the Product instance
-      const productObj = product.toJSON();
-
-      // If images exist, validate each image path
-      if (productObj.images && Array.isArray(productObj.images)) {
-        const validImages = productObj.images.filter((image) =>
-          imageExists(image)
-        );
-        productObj.images = validImages.length > 0 ? validImages : null;
-      } else if (
-        productObj.images &&
-        !Array.isArray(productObj.images) &&
-        !imageExists(productObj.images)
-      ) {
-        productObj.images = null;
-      }
-
-      return productObj;
+      return product.toJSON();
     });
 
     return validProducts;
@@ -45,24 +28,8 @@ const getProductById = async (id) => {
       return null;
     }
 
-    // Create a plain object from the Product instance
-    const productObj = product.toJSON();
-
-    // If images exist, validate each image path
-    if (productObj.images && Array.isArray(productObj.images)) {
-      const validImages = productObj.images.filter((image) =>
-        imageExists(image)
-      );
-      productObj.images = validImages.length > 0 ? validImages : null;
-    } else if (
-      productObj.images &&
-      !Array.isArray(productObj.images) &&
-      !imageExists(productObj.images)
-    ) {
-      productObj.images = null;
-    }
-
-    return productObj;
+    // Return product with images directly from database
+    return product.toJSON();
   } catch (error) {
     if (error.message === "Database connection failed") {
       throw new Error("Service unavailable. Please try again later.");

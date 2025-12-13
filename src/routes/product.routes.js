@@ -14,6 +14,9 @@ const {
   handleMultipleFieldNames,
   handleUploadError,
 } = require("../middleware/upload.middleware");
+const {
+  compressUploadedImages,
+} = require("../middleware/compression.middleware");
 
 // Create flexible upload middleware
 const upload = createFlexibleUpload();
@@ -30,6 +33,7 @@ router.post(
   upload.any(), // Use any() to accept any field name
   handleMultipleFieldNames,
   handleUploadError,
+  compressUploadedImages, // Compress images before saving
   productController.createProduct
 );
 router.put(
@@ -39,6 +43,7 @@ router.put(
   upload.any(), // Use any() to accept any field name
   handleMultipleFieldNames,
   handleUploadError,
+  compressUploadedImages, // Compress images before saving
   productController.updateProduct
 );
 router.delete(

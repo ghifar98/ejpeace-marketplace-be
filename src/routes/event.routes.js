@@ -14,6 +14,9 @@ const {
   handleMultipleFieldNames,
   handleUploadError,
 } = require("../middleware/upload.middleware");
+const {
+  compressUploadedImages,
+} = require("../middleware/compression.middleware");
 
 // Create flexible upload middleware
 const upload = createFlexibleUpload();
@@ -30,6 +33,7 @@ router.post(
   upload.any(), // Use any() to accept any field name
   handleMultipleFieldNames,
   handleUploadError,
+  compressUploadedImages, // Compress images before saving
   eventController.createEvent
 );
 router.put(
@@ -39,6 +43,7 @@ router.put(
   upload.any(), // Use any() to accept any field name
   handleMultipleFieldNames,
   handleUploadError,
+  compressUploadedImages, // Compress images before saving
   eventController.updateEvent
 );
 router.delete(
@@ -46,6 +51,14 @@ router.delete(
   authenticate,
   authorizeAdmin,
   eventController.deleteEvent
+);
+
+// Delete individual event image
+router.delete(
+  "/:eventId/images/:imageId",
+  authenticate,
+  authorizeAdmin,
+  eventController.deleteEventImage
 );
 
 module.exports = router;
