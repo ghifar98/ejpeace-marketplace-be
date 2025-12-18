@@ -23,14 +23,24 @@ const {
       });
     }
 
-    const { type, start_date, end_date } = req.query;
-    const orders = await orderService.getAllOrdersFiltered(start_date, end_date);
+    const { type, start_date, end_date, status } = req.query;
+    let orders = await orderService.getAllOrdersFiltered(start_date, end_date);
+
+    // Apply status filter if provided
+    if (status && status !== 'all') {
+      orders = orders.filter(order =>
+        order.status?.toLowerCase() === status.toLowerCase()
+      );
+    }
 
     if (type === "xlsx") {
       // IMPORTANT: Add await if using ExcelJS
       const xlsxBuffer = await orderService.generateOrdersXLSX(orders);
 
       let filename = "orders";
+      if (status && status !== 'all') {
+        filename += `_${status}`;
+      }
       if (start_date && end_date) {
         filename += `_${start_date}_to_${end_date}`;
       } else if (start_date) {

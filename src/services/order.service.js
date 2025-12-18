@@ -22,7 +22,16 @@ const getAllOrders = async () => {
     // Format purchases as orders
     const purchaseOrders = await Promise.all(
       purchases.map(async (purchase) => {
-        // Get user info would be handled by the controller
+        const details = await getPurchaseDetails(purchase.id);
+
+        // Extract product names from details.items
+        let productName = '-';
+        if (details?.items && details.items.length > 0) {
+          productName = details.items.map(item =>
+            `${item.product_name} (x${item.quantity})`
+          ).join(', ');
+        }
+
         return {
           id: `P-${purchase.id}`,
           type: "product",
@@ -33,7 +42,8 @@ const getAllOrders = async () => {
           created_at: purchase.created_at,
           updated_at: purchase.updated_at,
           completed_at: purchase.completed_at,
-          details: await getPurchaseDetails(purchase.id),
+          product_name: productName,
+          details: details,
         };
       })
     );
@@ -41,8 +51,9 @@ const getAllOrders = async () => {
     // Format tickets as orders
     const ticketOrders = await Promise.all(
       tickets.map(async (ticket) => {
-        // Get user info would be handled by the controller
         const event = await EventRepository.findById(ticket.event_id);
+        const eventName = event ? event.title : "Unknown Event";
+
         return {
           id: `T-${ticket.id}`,
           type: "ticket",
@@ -53,9 +64,10 @@ const getAllOrders = async () => {
           created_at: ticket.created_at,
           updated_at: ticket.updated_at,
           completed_at: ticket.completed_at,
+          product_name: eventName,
           details: {
             ticket_id: ticket.id,
-            event_name: event ? event.title : "Unknown Event",
+            event_name: eventName,
             event_id: ticket.event_id,
             ticket_type: ticket.ticket_type,
             attendee_name: ticket.attendee_name,
@@ -200,7 +212,27 @@ const getPurchaseDetails = async (purchaseId) => {
       WHERE c.purchase_id = ?
     `;
 
-    const [cartItems] = await db.execute(cartItemsQuery, [purchaseId]);
+    let [cartItems] = await db.execute(cartItemsQuery, [purchaseId]);
+
+    // Fallback: If no cart items but purchase has product_id (direct purchase/Buy Now flow)
+    if (cartItems.length === 0 && purchase.product_id) {
+      const product = await ProductRepository.findById(purchase.product_id);
+      if (product) {
+        // Calculate quantity from total_amount / price
+        const productPrice = parseFloat(product.price);
+        const totalAmount = parseFloat(purchase.total_amount);
+        const quantity = productPrice > 0 ? Math.max(1, Math.floor(totalAmount / productPrice)) : 1;
+
+        cartItems = [{
+          product_id: purchase.product_id,
+          product_name: product.name,
+          product_description: product.description,
+          quantity: quantity,
+          unit_price: productPrice,
+          total_price: totalAmount,
+        }];
+      }
+    }
 
     // Get address for this purchase
     const addressQuery = `
