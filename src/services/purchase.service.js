@@ -306,6 +306,48 @@ const createPurchaseDirect = async (
     let totalAmount = parseFloat(purchaseData.total_amount);
     let description = purchaseData.description || "Product purchase";
 
+    // Extract product_id for checking existing pending purchases
+    const productId = purchaseData.product_id || null;
+
+    // ========== CHECK FOR EXISTING PENDING PURCHASE ==========
+    // If user already has a pending purchase for the same product,
+    // update the quantity/total instead of creating a duplicate order
+    if (productId) {
+      const existingPendingPurchase = await PurchaseRepository.findPendingByUserAndProduct(
+        userId,
+        productId
+      );
+
+      if (existingPendingPurchase) {
+        console.log(
+          `[CREATE_PURCHASE_DIRECT] Found existing pending purchase: ${existingPendingPurchase.id}`
+        );
+        console.log(
+          `[CREATE_PURCHASE_DIRECT] Current total: ${existingPendingPurchase.total_amount}, Adding: ${totalAmount}`
+        );
+
+        // Calculate new total amount (existing + new)
+        const newTotalAmount =
+          parseFloat(existingPendingPurchase.total_amount) + totalAmount;
+
+        // Update the existing purchase with new total
+        await PurchaseRepository.update(existingPendingPurchase.id, {
+          total_amount: newTotalAmount,
+        });
+
+        console.log(
+          `[CREATE_PURCHASE_DIRECT] Updated purchase ${existingPendingPurchase.id} with new total: ${newTotalAmount}`
+        );
+
+        // Return updated purchase data
+        const updatedPurchase = await PurchaseRepository.findById(
+          existingPendingPurchase.id
+        );
+        return updatedPurchase.toJSON();
+      }
+    }
+    // ========== END CHECK FOR EXISTING PENDING PURCHASE ==========
+
     // Apply voucher discount if provided
     let finalAmount = totalAmount;
     let appliedVoucher = null;
@@ -339,7 +381,7 @@ const createPurchaseDirect = async (
       "[CREATE_PURCHASE_DIRECT] Extracting product_id from purchaseData:",
       JSON.stringify(purchaseData, null, 2)
     );
-    const productId = purchaseData.product_id || null;
+    // productId already declared above
     console.log("[CREATE_PURCHASE_DIRECT] Extracted productId:", productId);
 
     const purchaseRecordData = {
@@ -753,10 +795,10 @@ const handleInvoiceCallback = async (callbackData) => {
 
       throw new Error(
         `Purchase not found for this invoice. ` +
-          `External ID: ${external_id}, ` +
-          `Payment ID: ${id}, ` +
-          `Parsed Purchase ID: ${purchaseId || "null"}. ` +
-          `Check if the purchase was created and the payment was initiated.`
+        `External ID: ${external_id}, ` +
+        `Payment ID: ${id}, ` +
+        `Parsed Purchase ID: ${purchaseId || "null"}. ` +
+        `Check if the purchase was created and the payment was initiated.`
       );
     }
 
@@ -948,11 +990,10 @@ const handleInvoiceCallback = async (callbackData) => {
                             </div>
                             <div style="text-align: center; margin: 30px 0;">
                               <p><strong>ID Tiket:</strong> ${ticketId}</p>
-                              ${
-                                barcode.qr_code_image
-                                  ? `<img src="${barcode.qr_code_image}" alt="QR Code" style="max-width: 200px;">`
-                                  : ""
-                              }
+                              ${barcode.qr_code_image
+                          ? `<img src="${barcode.qr_code_image}" alt="QR Code" style="max-width: 200px;">`
+                          : ""
+                        }
                             </div>
                             <p>Salam,<br>Tim Peacetifal</p>
                           </div>
@@ -1005,10 +1046,8 @@ const handleInvoiceCallback = async (callbackData) => {
               });
 
               console.log(
-                `[Invoice Callback] 📦 Updated quantity for product ${
-                  product.name
-                } (ID: ${item.product_id}) from ${product.quantity} to ${
-                  product.quantity - item.quantity
+                `[Invoice Callback] 📦 Updated quantity for product ${product.name
+                } (ID: ${item.product_id}) from ${product.quantity} to ${product.quantity - item.quantity
                 }`
               );
             } else {
@@ -1067,10 +1106,8 @@ const handleInvoiceCallback = async (callbackData) => {
                 });
 
                 console.log(
-                  `[Invoice Callback] ✅ Direct purchase: Reduced stock for product "${
-                    product.name
-                  }" from ${product.quantity} to ${
-                    product.quantity - purchasedQuantity
+                  `[Invoice Callback] ✅ Direct purchase: Reduced stock for product "${product.name
+                  }" from ${product.quantity} to ${product.quantity - purchasedQuantity
                   }`
                 );
               } else {
@@ -1183,15 +1220,14 @@ const handleInvoiceCallback = async (callbackData) => {
                 return `
                   <tr>
                     <td style="padding: 8px; border-bottom: 1px solid #ddd;">${productDisplayName}</td>
-                    <td style="text-align: center; padding: 8px; border-bottom: 1px solid #ddd;">${
-                      item.quantity
-                    }</td>
+                    <td style="text-align: center; padding: 8px; border-bottom: 1px solid #ddd;">${item.quantity
+                  }</td>
                     <td style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd;">Rp ${item.product_price.toLocaleString(
-                      "id-ID"
-                    )}</td>
+                    "id-ID"
+                  )}</td>
                     <td style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd;">Rp ${(
-                      item.product_price * item.quantity
-                    ).toLocaleString("id-ID")}</td>
+                    item.product_price * item.quantity
+                  ).toLocaleString("id-ID")}</td>
                   </tr>
                 `;
               })
@@ -1218,11 +1254,11 @@ const handleInvoiceCallback = async (callbackData) => {
                       <td style="padding: 8px; border-bottom: 1px solid #ddd;">${productDisplayName}</td>
                       <td style="text-align: center; padding: 8px; border-bottom: 1px solid #ddd;">1</td>
                       <td style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd;">Rp ${productPrice.toLocaleString(
-                        "id-ID"
-                      )}</td>
+                    "id-ID"
+                  )}</td>
                       <td style="text-align: right; padding: 8px; border-bottom: 1px solid #ddd;">Rp ${productPrice.toLocaleString(
-                        "id-ID"
-                      )}</td>
+                    "id-ID"
+                  )}</td>
                     </tr>
                   `;
                 } else {
@@ -1262,16 +1298,15 @@ const handleInvoiceCallback = async (callbackData) => {
               <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
                 <h2>✅ Pembayaran Berhasil</h2>
                 <p>Halo ${customerName},</p>
-                <p>Terima kasih atas pembelian Anda. Pembayaran untuk pesanan #${
-                  purchase.id
-                } telah berhasil dikonfirmasi.</p>
+                <p>Terima kasih atas pembelian Anda. Pembayaran untuk pesanan #${purchase.id
+            } telah berhasil dikonfirmasi.</p>
                 
                 <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
                   <h3>Detail Pesanan:</h3>
                   <p><strong>ID Pesanan:</strong> ${purchase.id}</p>
                   <p><strong>Total Pembayaran:</strong> Rp ${purchase.total_amount.toLocaleString(
-                    "id-ID"
-                  )}</p>
+              "id-ID"
+            )}</p>
                   <p><strong>Status:</strong> ${newStatus}</p>
                 </div>
                 
@@ -1292,17 +1327,16 @@ const handleInvoiceCallback = async (callbackData) => {
                   </table>
                 </div>
                 
-                ${
-                  qrResult.publicUrl
-                    ? `
+                ${qrResult.publicUrl
+              ? `
                 <div style="text-align: center; margin: 30px 0;">
                   <p><strong>QR Code:</strong></p>
                   <img src="http://212.85.27.163:3000${qrResult.publicUrl}" alt="QR Code" style="max-width: 200px;">
                   <p><small>Gunakan QR Code ini untuk verifikasi pembelian Anda</small></p>
                 </div>
                 `
-                    : ""
-                }
+              : ""
+            }
                 
                 <p>Invoice pembelian telah dilampirkan dalam email ini.</p>
                 <p>Anda juga dapat melihat detail pembelian dan mengunduh invoice melalui dashboard profil Anda.</p>

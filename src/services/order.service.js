@@ -6,6 +6,81 @@ const db = require("../config/db.config");
 const XLSX = require("xlsx");
 const ExcelJS = require('exceljs');
 
+/**
+ * Consolidate duplicate orders for the same user, product, and status
+ * This merges multiple orders into a single order with combined quantity and amount
+ */
+const consolidateOrders = (orders) => {
+  const consolidatedMap = new Map();
+
+  for (const order of orders) {
+    // Only consolidate pending product orders (not paid/completed ones)
+    if (order.type !== "product" || order.status !== "pending") {
+      // For non-pending orders or tickets, use unique key to keep them separate
+      const uniqueKey = `unique_${order.id}`;
+      consolidatedMap.set(uniqueKey, order);
+      continue;
+    }
+
+    // Get product_id from details
+    const productId = order.details?.items?.[0]?.product_id;
+    if (!productId) {
+      // No product_id, keep as separate order
+      const uniqueKey = `unique_${order.id}`;
+      consolidatedMap.set(uniqueKey, order);
+      continue;
+    }
+
+    // Create a key for consolidation: user_id + product_id + status
+    const key = `${order.user_id}_${productId}_${order.status}`;
+
+    if (consolidatedMap.has(key)) {
+      // Merge with existing order
+      const existing = consolidatedMap.get(key);
+
+      // Add up the amounts
+      const existingAmount = parseFloat(existing.amount) || 0;
+      const newAmount = parseFloat(order.amount) || 0;
+      existing.amount = (existingAmount + newAmount).toFixed(2);
+
+      // Merge the IDs (keep oldest, but track all merged IDs)
+      if (!existing.merged_order_ids) {
+        existing.merged_order_ids = [existing.id];
+      }
+      existing.merged_order_ids.push(order.id);
+
+      // Update quantity in details.items
+      if (existing.details?.items?.[0] && order.details?.items?.[0]) {
+        const existingQty = existing.details.items[0].quantity || 0;
+        const newQty = order.details.items[0].quantity || 0;
+        existing.details.items[0].quantity = existingQty + newQty;
+        existing.details.items[0].total_price =
+          (parseFloat(existing.details.items[0].total_price) || 0) +
+          (parseFloat(order.details.items[0].total_price) || 0);
+      }
+
+      // Update the product_name with new quantity
+      if (existing.details?.items?.[0]) {
+        const item = existing.details.items[0];
+        existing.product_name = `${item.product_name} (x${item.quantity})`;
+      }
+
+      // Update total_amount in details
+      existing.details.total_amount = existing.amount;
+
+      // Use the newest created_at for better visibility, but keep oldest ID
+      if (new Date(order.created_at) > new Date(existing.created_at)) {
+        existing.updated_at = order.created_at;
+      }
+    } else {
+      // First occurrence, add to map
+      consolidatedMap.set(key, { ...order });
+    }
+  }
+
+  return Array.from(consolidatedMap.values());
+};
+
 
 /**
  * Get all orders (purchases and tickets) for admin view
@@ -78,7 +153,13 @@ const getAllOrders = async () => {
     );
 
     // Combine and sort by creation date (newest first)
-    const allOrders = [...purchaseOrders, ...ticketOrders];
+    let allOrders = [...purchaseOrders, ...ticketOrders];
+    allOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Consolidate duplicate pending orders (same user, same product, pending status)
+    allOrders = consolidateOrders(allOrders);
+
+    // Re-sort after consolidation
     allOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     // START: Batch fetch user info
@@ -175,7 +256,13 @@ const getUserOrders = async (userId) => {
     );
 
     // Combine and sort by creation date (newest first)
-    const userOrders = [...purchaseOrders, ...ticketOrders];
+    let userOrders = [...purchaseOrders, ...ticketOrders];
+    userOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Consolidate duplicate pending orders (same user, same product, pending status)
+    userOrders = consolidateOrders(userOrders);
+
+    // Re-sort after consolidation
     userOrders.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
     return userOrders;

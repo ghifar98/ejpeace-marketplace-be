@@ -179,6 +179,32 @@ class PurchaseRepository {
     }
   }
 
+  // Find pending purchase by user ID and product ID
+  // This is used to consolidate orders instead of creating duplicates
+  static async findPendingByUserAndProduct(userId, productId) {
+    const query = `
+      SELECT id, user_id, product_id, total_amount, status, payment_id, external_id, created_at, updated_at, completed_at
+      FROM purchases
+      WHERE user_id = ? AND product_id = ? AND status = 'pending'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+
+    try {
+      const [rows] = await db.execute(query, [userId, productId]);
+      if (rows.length === 0) return null;
+      return new Purchase(rows[0]);
+    } catch (error) {
+      if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
+        console.error(
+          "Database connection failed while finding pending purchase"
+        );
+        return null;
+      }
+      throw error;
+    }
+  }
+
   // Get all purchases (for admin view)
   static async findAll() {
     const query = `
