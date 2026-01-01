@@ -181,21 +181,24 @@ const createPurchaseFromCart = async (
 
     // If voucher was applied, associate it with the purchase
     if (appliedVoucher) {
+      console.log(`[createPurchaseFromCart] 🎟️ Associating voucher ID ${appliedVoucher.id} with purchase ${purchaseId}`);
       try {
         const VoucherRepository = require("../models/voucher.repository");
-        await VoucherRepository.associateWithPurchase(
+        const linkId = await VoucherRepository.associateWithPurchase(
           purchaseId,
           appliedVoucher.id,
           discountAmount
         );
+        console.log(`[createPurchaseFromCart] ✅ Voucher linked successfully (link ID: ${linkId})`);
         // Increment usage removed to prevent double counting (moved to handleInvoiceCallback)
         // await VoucherRepository.incrementUsage(appliedVoucher.id);
       } catch (error) {
-        console.warn(
-          "Failed to associate voucher with purchase:",
-          error.message
-        );
+        console.error(`[createPurchaseFromCart] ❌ VOUCHER LINK FAILED: ${error.message}`);
+        // Make this a hard failure so the issue is visible
+        throw new Error(`Failed to associate voucher with purchase: ${error.message}`);
       }
+    } else {
+      console.log(`[createPurchaseFromCart] No voucher applied to purchase ${purchaseId}`);
     }
 
     // Create order address
@@ -370,21 +373,23 @@ const createPurchaseDirect = async (
 
     // If voucher was applied, associate it with the purchase
     if (appliedVoucher) {
+      console.log(`[createPurchaseDirect] 🎟️ Associating voucher ID ${appliedVoucher.id} with purchase ${purchaseId}`);
       try {
         const VoucherRepository = require("../models/voucher.repository");
-        await VoucherRepository.associateWithPurchase(
+        const linkId = await VoucherRepository.associateWithPurchase(
           purchaseId,
           appliedVoucher.id,
           discountAmount
         );
+        console.log(`[createPurchaseDirect] ✅ Voucher linked successfully (link ID: ${linkId})`);
         // Increment usage removed to prevent double counting (moved to handleInvoiceCallback)
         // await VoucherRepository.incrementUsage(appliedVoucher.id);
       } catch (error) {
-        console.warn(
-          "Failed to associate voucher with purchase:",
-          error.message
-        );
+        console.error(`[createPurchaseDirect] ❌ VOUCHER LINK FAILED: ${error.message}`);
+        throw new Error(`Failed to associate voucher with purchase: ${error.message}`);
       }
+    } else {
+      console.log(`[createPurchaseDirect] No voucher applied to purchase ${purchaseId}`);
     }
 
     // Create order address
@@ -843,8 +848,11 @@ const handleInvoiceCallback = async (callbackData) => {
       );
 
       let voucherIdToCheck = null;
+      console.log(`[Invoice Callback] 🔍 Checking purchase_vouchers for purchase ${lockedPurchase.id}...`);
+      console.log(`[Invoice Callback] Found ${voucherRows.length} voucher link(s)`);
       if (voucherRows.length > 0) {
         voucherIdToCheck = voucherRows[0].voucher_id;
+        console.log(`[Invoice Callback] 🎟️ Voucher ID to increment: ${voucherIdToCheck}`);
 
         // Lock and check voucher
         const [vRows] = await connection.execute(
@@ -861,8 +869,9 @@ const handleInvoiceCallback = async (callbackData) => {
             throw error;
           }
         }
+      } else {
+        console.log(`[Invoice Callback] ⚠️ No voucher linked to this purchase`);
       }
-
 
       // Determine new status
       if (status === "PAID" || status === "SUCCESS") {
