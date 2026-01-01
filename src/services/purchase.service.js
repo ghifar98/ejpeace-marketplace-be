@@ -188,8 +188,8 @@ const createPurchaseFromCart = async (
           appliedVoucher.id,
           discountAmount
         );
-        // Increment voucher usage count
-        await VoucherRepository.incrementUsage(appliedVoucher.id);
+        // Increment usage removed to prevent double counting (moved to handleInvoiceCallback)
+        // await VoucherRepository.incrementUsage(appliedVoucher.id);
       } catch (error) {
         console.warn(
           "Failed to associate voucher with purchase:",
@@ -377,8 +377,8 @@ const createPurchaseDirect = async (
           appliedVoucher.id,
           discountAmount
         );
-        // Increment voucher usage count
-        await VoucherRepository.incrementUsage(appliedVoucher.id);
+        // Increment usage removed to prevent double counting (moved to handleInvoiceCallback)
+        // await VoucherRepository.incrementUsage(appliedVoucher.id);
       } catch (error) {
         console.warn(
           "Failed to associate voucher with purchase:",
