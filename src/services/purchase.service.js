@@ -861,30 +861,58 @@ const handleInvoiceCallback = async (callbackData) => {
         `[Invoice Callback] Found ${cartItems.length} cart items linked to purchase ${purchase.id}`
       );
 
-      // ✅ FALLBACK: If no cart items linked, try to get from user's cart
-      // This handles cases where cart items weren't linked during purchase creation
+      // ✅ FALLBACK 1: If no cart items linked, try order_addresses table
+      // This table always has product_id linked to purchase during checkout
       if (!cartItems || cartItems.length === 0) {
         console.log(
-          `[Invoice Callback] ⚠️ No cart items linked to purchase, trying user cart fallback`
+          `[Invoice Callback] ⚠️ No cart items linked, trying order_addresses fallback`
+        );
+
+        try {
+          const OrderAddressRepository = require("../models/orderAddress.repository");
+          const orderAddress = await OrderAddressRepository.findByPurchaseId(purchase.id);
+
+          if (orderAddress && orderAddress.product_id) {
+            console.log(
+              `[Invoice Callback] ✅ Found product_id ${orderAddress.product_id} from order_addresses`
+            );
+
+            // Create a cart item-like object for the loop below
+            const product = await ProductRepository.findById(orderAddress.product_id);
+            if (product) {
+              // Calculate quantity from total_amount / price
+              const totalAmount = parseFloat(purchase.total_amount);
+              const productPrice = parseFloat(product.price);
+              const quantity = Math.max(1, Math.floor(totalAmount / productPrice));
+
+              cartItems = [{
+                product_id: orderAddress.product_id,
+                quantity: quantity,
+                product_name: product.name,
+                product_category: product.category
+              }];
+
+              console.log(
+                `[Invoice Callback] Created virtual cart item: product ${orderAddress.product_id}, qty ${quantity}`
+              );
+            }
+          }
+        } catch (orderAddressError) {
+          console.warn(`[Invoice Callback] order_addresses fallback failed:`, orderAddressError.message);
+        }
+      }
+
+      // ✅ FALLBACK 2: Try user's cart (may be empty if cleared)
+      if (!cartItems || cartItems.length === 0) {
+        console.log(
+          `[Invoice Callback] ⚠️ No items from order_addresses, trying user cart`
         );
 
         const userCartItems = await CartRepository.getCartItemsByUserId(purchase.user_id);
-
         if (userCartItems && userCartItems.length > 0) {
           console.log(
-            `[Invoice Callback] Found ${userCartItems.length} items in user's cart, linking to purchase`
+            `[Invoice Callback] Found ${userCartItems.length} items in user's cart`
           );
-
-          // Link cart items to this purchase
-          for (const item of userCartItems) {
-            try {
-              await linkCartItemToPurchase(item.id, purchase.id);
-              console.log(`[Invoice Callback] Linked cart item ${item.id} to purchase ${purchase.id}`);
-            } catch (linkError) {
-              console.warn(`[Invoice Callback] Failed to link cart item: ${linkError.message}`);
-            }
-          }
-
           cartItems = userCartItems;
         }
       }
