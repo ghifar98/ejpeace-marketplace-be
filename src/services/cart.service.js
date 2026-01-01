@@ -32,6 +32,15 @@ const addItemToCart = async (cartData) => {
       throw new Error("Product not found");
     }
 
+    // Check if product has sufficient stock
+    if (product.quantity === 0) {
+      throw new Error("Product is out of stock");
+    }
+
+    if (product.quantity < cartData.quantity) {
+      throw new Error(`Only ${product.quantity} items available in stock`);
+    }
+
     // Create cart object
     const cartItem = new Cart(cartData);
 

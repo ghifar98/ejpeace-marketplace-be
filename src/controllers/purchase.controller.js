@@ -354,15 +354,15 @@ const getPurchaseDetail = async (req, res) => {
     // Prepare address data
     const addressData = address
       ? {
-          full_name: address.full_name,
-          phone: address.phone,
-          address_line1: address.address_line1,
-          address_line2: address.address_line2,
-          city: address.city,
-          state: address.state,
-          postal_code: address.postal_code,
-          country: address.country,
-        }
+        full_name: address.full_name,
+        phone: address.phone,
+        address_line1: address.address_line1,
+        address_line2: address.address_line2,
+        city: address.city,
+        state: address.state,
+        postal_code: address.postal_code,
+        country: address.country,
+      }
       : null;
 
     return successResponse(res, "Purchase detail retrieved", {
@@ -381,6 +381,27 @@ const getPurchaseDetail = async (req, res) => {
   }
 };
 
+/**
+ * Simulate payment success for testing (only works when Xendit is not configured)
+ * This endpoint manually processes a purchase as PAID
+ */
+const simulatePayment = async (req, res) => {
+  try {
+    const { purchase_id } = req.body;
+
+    if (!purchase_id) {
+      return validationErrorResponse(res, ["Purchase ID is required"]);
+    }
+
+    const result = await purchaseService.simulatePaymentSuccess(purchase_id);
+
+    return successResponse(res, result.message, result);
+  } catch (error) {
+    console.error("Simulate payment error:", error);
+    return errorResponse(res, "Failed to simulate payment", error.message, 400);
+  }
+};
+
 module.exports = {
   createPurchase,
   createPurchaseDirect,
@@ -391,4 +412,6 @@ module.exports = {
   getPurchaseById,
   downloadInvoice,
   getPurchaseDetail,
+  simulatePayment,
 };
+

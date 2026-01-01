@@ -611,6 +611,23 @@ const handlePaymentCallback = async (callbackData) => {
         }
       }
 
+      // Increment voucher usage if voucher was applied to this purchase
+      try {
+        const VoucherRepository = require("../models/voucher.repository");
+        const [voucherRows] = await db.execute(
+          "SELECT voucher_id FROM purchase_vouchers WHERE purchase_id = ?",
+          [purchase.id]
+        );
+
+        if (voucherRows.length > 0) {
+          const voucherId = voucherRows[0].voucher_id;
+          await VoucherRepository.incrementUsage(voucherId);
+          console.log(`[PAYMENT_CALLBACK] Incremented usage for voucher ${voucherId}`);
+        }
+      } catch (voucherError) {
+        console.warn("[PAYMENT_CALLBACK] Could not increment voucher usage:", voucherError.message);
+      }
+
       // NOTE: We no longer clear the cart here because it should only be cleared
       // after the invoice and email have been successfully sent in handleInvoiceCallback
       // This ensures the user can still see their cart items if they check their cart
@@ -1101,6 +1118,25 @@ const handleInvoiceCallback = async (callbackData) => {
       }
     }
 
+    // Increment voucher usage if a voucher was applied to this purchase
+    if (newStatus === "paid") {
+      try {
+        const VoucherRepository = require("../models/voucher.repository");
+        const [voucherRows] = await db.execute(
+          "SELECT voucher_id FROM purchase_vouchers WHERE purchase_id = ?",
+          [purchase.id]
+        );
+
+        if (voucherRows.length > 0) {
+          const voucherId = voucherRows[0].voucher_id;
+          await VoucherRepository.incrementUsage(voucherId);
+          console.log(`[Invoice Callback] ✅ Incremented usage for voucher ${voucherId}`);
+        }
+      } catch (voucherError) {
+        console.warn("[Invoice Callback] ⚠️ Could not increment voucher usage:", voucherError.message);
+      }
+    }
+
     // --- NEW: Generate QR & Invoice & Send Email ---
     if (newStatus === "paid") {
       try {
@@ -1528,6 +1564,110 @@ const linkCartItemToPurchase = async (cartItemId, purchaseId) => {
   }
 };
 
+/**
+ * Simulate payment success for testing when Xendit is not configured
+ * This function manually processes a purchase as PAID:
+ * - Reduces product stock
+ * - Increments voucher usage if applicable
+ * - Updates purchase status to 'paid'
+ */
+const simulatePaymentSuccess = async (purchaseId) => {
+  try {
+    console.log(`[SIMULATE_PAYMENT] Starting simulation for purchase ${purchaseId}`);
+
+    // Get purchase
+    const purchase = await PurchaseRepository.findById(purchaseId);
+    if (!purchase) {
+      throw new Error("Purchase not found");
+    }
+
+    // Check if already paid
+    if (purchase.status === "paid") {
+      return {
+        success: true,
+        message: "Purchase already paid",
+        purchase_id: purchaseId,
+      };
+    }
+
+    // Get cart items linked to this purchase
+    let cartItems = await CartRepository.getCartItemsByPurchaseId(purchaseId);
+
+    // If no items linked, try to get from user's cart and link them
+    if (cartItems.length === 0) {
+      console.log(`[SIMULATE_PAYMENT] No linked items found, checking user cart`);
+      const userCartItems = await CartRepository.getCartItemsByUserId(purchase.user_id);
+
+      if (userCartItems && userCartItems.length > 0) {
+        // Link cart items to purchase
+        for (const item of userCartItems) {
+          await linkCartItemToPurchase(item.id, purchaseId);
+        }
+        cartItems = userCartItems;
+      }
+    }
+
+    console.log(`[SIMULATE_PAYMENT] Found ${cartItems.length} cart items`);
+
+    // Reduce stock for each product
+    for (const item of cartItems) {
+      if (!item.product_id || !item.quantity) continue;
+
+      const product = await ProductRepository.findById(item.product_id);
+      if (product && product.quantity >= item.quantity) {
+        await ProductRepository.update(item.product_id, {
+          name: product.name,
+          description: product.description,
+          price: product.price,
+          category: product.category,
+          size: product.size,
+          quantity: product.quantity - item.quantity,
+        });
+        console.log(`[SIMULATE_PAYMENT] Reduced stock for product ${item.product_id} by ${item.quantity}`);
+      }
+    }
+
+    // Check if voucher was applied and increment usage
+    try {
+      const VoucherRepository = require("../models/voucher.repository");
+      const [voucherRows] = await db.execute(
+        "SELECT voucher_id FROM purchase_vouchers WHERE purchase_id = ?",
+        [purchaseId]
+      );
+
+      if (voucherRows.length > 0) {
+        const voucherId = voucherRows[0].voucher_id;
+        await VoucherRepository.incrementUsage(voucherId);
+        console.log(`[SIMULATE_PAYMENT] Incremented usage for voucher ${voucherId}`);
+      }
+    } catch (voucherError) {
+      console.warn("[SIMULATE_PAYMENT] Could not increment voucher usage:", voucherError.message);
+    }
+
+    // Update purchase status to paid
+    await PurchaseRepository.update(purchaseId, {
+      status: "paid",
+      completed_at: new Date(),
+    });
+
+    console.log(`[SIMULATE_PAYMENT] Purchase ${purchaseId} marked as PAID`);
+
+    // Clear user's cart (items already linked to purchase)
+    await CartRepository.clearUserCart(purchase.user_id);
+    console.log(`[SIMULATE_PAYMENT] Cleared cart for user ${purchase.user_id}`);
+
+    return {
+      success: true,
+      message: "Payment simulated successfully",
+      purchase_id: purchaseId,
+      status: "paid",
+    };
+  } catch (error) {
+    console.error("[SIMULATE_PAYMENT] Error:", error);
+    throw new Error("Failed to simulate payment: " + error.message);
+  }
+};
+
 module.exports = {
   createPurchaseFromCart,
   createPurchaseDirect,
@@ -1537,4 +1677,5 @@ module.exports = {
   getUserPurchases,
   getPurchaseById,
   updatePurchaseTotal,
+  simulatePaymentSuccess,
 };

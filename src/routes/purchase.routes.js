@@ -32,4 +32,9 @@ router.get("/:id/detail", purchaseController.getPurchaseDetail);
 // Download invoice
 router.get("/:id/invoice", authenticate, purchaseController.downloadInvoice);
 
+// Simulate payment success (for testing without Xendit)
+// Only use this in development when Xendit is not configured
+router.post("/simulate-payment", authenticate, purchaseController.simulatePayment);
+
 module.exports = router;
+
