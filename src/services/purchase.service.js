@@ -137,7 +137,7 @@ const createPurchaseFromCart = async (
         // Import voucher service
         const voucherService = require("./voucher.service");
 
-        // Validate voucher
+        // Validate voucher - STRICT: Throw error if invalid
         const validation = await voucherService.validateVoucher(
           voucherCode,
           totalAmount
@@ -146,10 +146,13 @@ const createPurchaseFromCart = async (
           appliedVoucher = validation.voucher;
           discountAmount = validation.discount_amount;
           finalAmount = validation.final_amount;
+        } else {
+          // Should theoretically be caught by validateVoucher throwing, but just in case
+          throw new Error("Voucher invalid");
         }
       } catch (error) {
-        console.warn("Failed to apply voucher:", error.message);
-        // Continue without voucher if validation fails
+        console.error("Voucher validation failed:", error.message);
+        throw new Error("Voucher usage limit has been reached or is invalid: " + error.message);
       }
     }
 
@@ -325,7 +328,7 @@ const createPurchaseDirect = async (
         // Import voucher service
         const voucherService = require("./voucher.service");
 
-        // Validate voucher
+        // Validate voucher - STRICT: Throw error if invalid
         const validation = await voucherService.validateVoucher(
           voucherCode,
           totalAmount
@@ -334,10 +337,13 @@ const createPurchaseDirect = async (
           appliedVoucher = validation.voucher;
           discountAmount = validation.discount_amount;
           finalAmount = validation.final_amount;
+        } else {
+          // Should theoretically be caught by validateVoucher throwing, but just in case
+          throw new Error("Voucher invalid");
         }
       } catch (error) {
-        console.warn("Failed to apply voucher:", error.message);
-        // Continue without voucher if validation fails
+        console.error("Voucher validation failed:", error.message);
+        throw new Error("Voucher usage limit has been reached or is invalid: " + error.message);
       }
     }
 
@@ -828,6 +834,36 @@ const handleInvoiceCallback = async (callbackData) => {
         };
       }
 
+      // 🔍 STRICT VOUCHER VALIDATION (BEFORE PAYMENT)
+      // Check if voucher limit is reached BEFORE we attempt to process payment
+      const VoucherRepository = require("../models/voucher.repository");
+      const [voucherRows] = await connection.execute(
+        "SELECT voucher_id FROM purchase_vouchers WHERE purchase_id = ?",
+        [lockedPurchase.id]
+      );
+
+      let voucherIdToCheck = null;
+      if (voucherRows.length > 0) {
+        voucherIdToCheck = voucherRows[0].voucher_id;
+
+        // Lock and check voucher
+        const [vRows] = await connection.execute(
+          "SELECT id, used_count, max_usage FROM vouchers WHERE id = ? FOR UPDATE",
+          [voucherIdToCheck]
+        );
+
+        if (vRows.length > 0) {
+          const voucher = vRows[0];
+          if (voucher.max_usage && voucher.used_count >= voucher.max_usage) {
+            console.error(`[Invoice Callback] ❌ Voucher ${voucher.id} limit exceeded (Used: ${voucher.used_count}, Max: ${voucher.max_usage})`);
+            const error = new Error("Voucher usage limit has been reached");
+            error.code = "VOUCHER_LIMIT_EXCEEDED";
+            throw error;
+          }
+        }
+      }
+
+
       // Determine new status
       if (status === "PAID" || status === "SUCCESS") {
         newStatus = "paid";
@@ -903,16 +939,22 @@ const handleInvoiceCallback = async (callbackData) => {
               // We will keep the ticket creation logic OUTSIDE this block or assume it handles its own errors safely.
               // For this refactor, I will ONLY reduce stock transactionally.
 
-              if (product.quantity >= item.quantity) {
-                const newQuantity = product.quantity - item.quantity;
-                await ProductRepository.updateQuantityWithConnection(
-                  item.product_id,
-                  newQuantity,
-                  connection
-                );
+              // STRICT STOCK REDUCTION
+              // Use updateQuantityWithConnection which returns false if stock is insufficient
+              // If it returns false, we MUST throw an error to ROLLBACK the entire transaction
+              const stockReduced = await ProductRepository.updateQuantityWithConnection(
+                item.product_id,
+                item.quantity,
+                connection
+              );
+
+              if (stockReduced) {
                 console.log(`[Invoice Callback] 📉 Stock reduced for product ${item.product_id}`);
               } else {
-                console.warn(`[Invoice Callback] ⚠️ Insufficient stock for product ${item.product_id}`);
+                console.error(`[Invoice Callback] ❌ Insufficient stock for product ${item.product_id} (Requested: ${item.quantity})`);
+                const error = new Error(`Insufficient stock for product ${item.product_id}`);
+                error.code = "INSUFFICIENT_STOCK";
+                throw error;
               }
             }
           }
@@ -926,28 +968,40 @@ const handleInvoiceCallback = async (callbackData) => {
             const productPrice = parseFloat(product.price);
             const quantity = Math.floor(totalAmount / productPrice);
 
-            if (product.quantity >= quantity) {
-              await ProductRepository.updateQuantityWithConnection(
-                lockedPurchase.product_id,
-                product.quantity - quantity,
-                connection
-              );
+            const stockReduced = await ProductRepository.updateQuantityWithConnection(
+              lockedPurchase.product_id,
+              quantity,
+              connection
+            );
+
+            if (stockReduced) {
               console.log(`[Invoice Callback] 📉 Direct purchase stock reduced`);
+            } else {
+              console.error(`[Invoice Callback] ❌ Insufficient stock for direct purchase (Product: ${lockedPurchase.product_id})`);
+              const error = new Error(`Insufficient stock for product ${lockedPurchase.product_id}`);
+              error.code = "INSUFFICIENT_STOCK";
+              throw error;
             }
           }
         }
 
         // 4. Increment Voucher Usage (Transactional)
-        const VoucherRepository = require("../models/voucher.repository");
-        const [voucherRows] = await connection.execute(
-          "SELECT voucher_id FROM purchase_vouchers WHERE purchase_id = ?",
-          [lockedPurchase.id]
-        );
+        // We already checked limits above, but this call includes the strict check again for safety
+        if (voucherIdToCheck) {
+          // STRICT VOUCHER INCREMENT
+          const voucherUpdated = await VoucherRepository.incrementUsageWithConnection(voucherIdToCheck, connection);
 
-        if (voucherRows.length > 0) {
-          const voucherId = voucherRows[0].voucher_id;
-          await VoucherRepository.incrementUsageWithConnection(voucherId, connection);
-          console.log(`[Invoice Callback] 🎟️ Voucher ${voucherId} usage incremented`);
+          if (voucherUpdated) {
+            console.log(`[Invoice Callback] 🎟️ Voucher ${voucherIdToCheck} usage incremented`);
+          } else {
+            // This technically shouldn't happen if the check above passed and row was locked,
+            // unless max_usage was reduced by admin concurrently? But we locked row, so it's safe.
+            // Or if incrementUsageWithConnection logic differs.
+            console.error(`[Invoice Callback] ❌ Voucher ${voucherIdToCheck} usage limit reached (at increment step)`);
+            const error = new Error(`Voucher usage limit reached for voucher ${voucherIdToCheck}`);
+            error.code = "VOUCHER_LIMIT_EXCEEDED";
+            throw error;
+          }
         }
       }
 
@@ -956,6 +1010,24 @@ const handleInvoiceCallback = async (callbackData) => {
     } catch (error) {
       await connection.rollback();
       console.error(`[Invoice Callback] ❌ Transaction failed, rolled back: ${error.message}`);
+
+      // CRITICAL: Handle specific failures by marking order status
+      // We must do this AFTER rollback, in a new persistent operation
+      if (error.code === "VOUCHER_LIMIT_EXCEEDED") {
+        try {
+          console.log("[Invoice Callback] marking order as failed_voucher_limit...");
+          await PurchaseRepository.update(purchase.id, {
+            status: "failed_voucher_limit", // Custom status for manual review/user notification
+            completed_at: null
+          });
+        } catch (updateErr) {
+          console.error("[Invoice Callback] Failed to mark order as failed_voucher_limit:", updateErr.message);
+        }
+      } else if (error.code === "INSUFFICIENT_STOCK") {
+        // Optional: You could also mark insufficient_stock here if desired, 
+        // simply logging it for now as strict requirement was mainly about voucher used_count
+      }
+
       throw error;
     } finally {
       connection.release();
@@ -1596,58 +1668,34 @@ const simulatePaymentSuccess = async (purchaseId) => {
 
     console.log(`[SIMULATE_PAYMENT] Found ${cartItems.length} cart items`);
 
-    // Reduce stock for each product
-    for (const item of cartItems) {
-      if (!item.product_id || !item.quantity) continue;
+    // Use handleInvoiceCallback to ensure consistent, strict transactional logic
+    // Construct a synthetic Xendit-like callback payload
 
-      const product = await ProductRepository.findById(item.product_id);
-      if (product && product.quantity >= item.quantity) {
-        await ProductRepository.update(item.product_id, {
-          name: product.name,
-          description: product.description,
-          price: product.price,
-          category: product.category,
-          size: product.size,
-          quantity: product.quantity - item.quantity,
-        });
-        console.log(`[SIMULATE_PAYMENT] Reduced stock for product ${item.product_id} by ${item.quantity}`);
-      }
-    }
+    // Ensure we have an external_id to match. If purchase doesn't have one, we might need a workaround,
+    // but typically purchases have external_id.
+    const externalId = purchase.external_id || `purchase_${purchase.id}_simulation`;
 
-    // Check if voucher was applied and increment usage
-    try {
-      const VoucherRepository = require("../models/voucher.repository");
-      const [voucherRows] = await db.execute(
-        "SELECT voucher_id FROM purchase_vouchers WHERE purchase_id = ?",
-        [purchaseId]
-      );
+    const simulationPayload = {
+      id: `sim_inv_${Date.now()}`,
+      external_id: externalId,
+      status: "PAID",
+      amount: purchase.total_amount,
+      paid_amount: purchase.total_amount,
+      paid_at: new Date().toISOString(),
+      payer_email: "simulation@test.com",
+      description: "Simulated Payment via Admin/Dev Tool"
+    };
 
-      if (voucherRows.length > 0) {
-        const voucherId = voucherRows[0].voucher_id;
-        await VoucherRepository.incrementUsage(voucherId);
-        console.log(`[SIMULATE_PAYMENT] Incremented usage for voucher ${voucherId}`);
-      }
-    } catch (voucherError) {
-      console.warn("[SIMULATE_PAYMENT] Could not increment voucher usage:", voucherError.message);
-    }
+    console.log(`[SIMULATE_PAYMENT] Delegating to handleInvoiceCallback with payload:`, simulationPayload);
 
-    // Update purchase status to paid
-    await PurchaseRepository.update(purchaseId, {
-      status: "paid",
-      completed_at: new Date(),
-    });
-
-    console.log(`[SIMULATE_PAYMENT] Purchase ${purchaseId} marked as PAID`);
-
-    // Clear user's cart (items already linked to purchase)
-    await CartRepository.clearUserCart(purchase.user_id);
-    console.log(`[SIMULATE_PAYMENT] Cleared cart for user ${purchase.user_id}`);
+    // Call handleInvoiceCallback
+    // detailed result is returned by handleInvoiceCallback
+    const result = await handleInvoiceCallback(simulationPayload);
 
     return {
       success: true,
-      message: "Payment simulated successfully",
-      purchase_id: purchaseId,
-      status: "paid",
+      message: "Payment simulation completed via strict transactional flow",
+      data: result
     };
   } catch (error) {
     console.error("[SIMULATE_PAYMENT] Error:", error);

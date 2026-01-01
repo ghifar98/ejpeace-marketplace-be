@@ -218,12 +218,12 @@ class VoucherRepository {
     }
   }
 
-  // Increment voucher usage count with transaction connection
+  // Increment voucher usage count with transaction connection and strict limit check
   static async incrementUsageWithConnection(id, connection) {
     const query = `
       UPDATE vouchers
       SET used_count = used_count + 1, updated_at = ?
-      WHERE id = ?
+      WHERE id = ? AND used_count < max_usage
     `;
     try {
       const [result] = await connection.execute(query, [new Date(), id]);

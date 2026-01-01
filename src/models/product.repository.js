@@ -195,6 +195,30 @@ class ProductRepository {
       throw error;
     }
   }
+  // Transactional update quantity with strict check
+  static async updateQuantityWithConnection(id, quantityToReduce, connection) {
+    const query = `
+      UPDATE products
+      SET quantity = quantity - ?, updated_at = ?
+      WHERE id = ? AND quantity >= ? AND deleted_at IS NULL
+    `;
+
+    try {
+      const [result] = await connection.execute(query, [
+        quantityToReduce,
+        new Date(),
+        id,
+        quantityToReduce,
+      ]);
+      return result.affectedRows > 0;
+    } catch (error) {
+      console.error(
+        "Database error while updating product quantity with connection:",
+        error.message
+      );
+      throw error;
+    }
+  }
 }
 
 module.exports = ProductRepository;
