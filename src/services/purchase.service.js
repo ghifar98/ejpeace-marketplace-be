@@ -858,7 +858,39 @@ const handleInvoiceCallback = async (callbackData) => {
       cartItems = await CartRepository.getCartItemsByPurchaseId(purchase.id);
 
       console.log(
-        `[Invoice Callback] Found ${cartItems.length} cart items for purchase ${purchase.id}`
+        `[Invoice Callback] Found ${cartItems.length} cart items linked to purchase ${purchase.id}`
+      );
+
+      // ✅ FALLBACK: If no cart items linked, try to get from user's cart
+      // This handles cases where cart items weren't linked during purchase creation
+      if (!cartItems || cartItems.length === 0) {
+        console.log(
+          `[Invoice Callback] ⚠️ No cart items linked to purchase, trying user cart fallback`
+        );
+
+        const userCartItems = await CartRepository.getCartItemsByUserId(purchase.user_id);
+
+        if (userCartItems && userCartItems.length > 0) {
+          console.log(
+            `[Invoice Callback] Found ${userCartItems.length} items in user's cart, linking to purchase`
+          );
+
+          // Link cart items to this purchase
+          for (const item of userCartItems) {
+            try {
+              await linkCartItemToPurchase(item.id, purchase.id);
+              console.log(`[Invoice Callback] Linked cart item ${item.id} to purchase ${purchase.id}`);
+            } catch (linkError) {
+              console.warn(`[Invoice Callback] Failed to link cart item: ${linkError.message}`);
+            }
+          }
+
+          cartItems = userCartItems;
+        }
+      }
+
+      console.log(
+        `[Invoice Callback] Processing ${cartItems.length} cart items for stock reduction`
       );
 
       // Validate cart items exist
