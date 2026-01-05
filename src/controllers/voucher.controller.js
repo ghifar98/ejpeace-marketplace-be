@@ -381,7 +381,7 @@ const validateVoucherForItems = async (req, res) => {
  */
 const validateVoucherUsage = async (req, res) => {
   try {
-    const { code, product_ids, event_ids } = req.body;
+    const { code, product_ids, event_ids, order_amount } = req.body;
 
     // Validate that request body exists
     if (!req.body || Object.keys(req.body).length === 0) {
@@ -412,10 +412,12 @@ const validateVoucherUsage = async (req, res) => {
       return validationErrorResponse(res, ["event_ids must be an array"]);
     }
 
+    // Pass order_amount to service for accurate min_order validation
     const validation = await voucherService.validateVoucherUsage(
       code,
       productIds,
-      eventIds
+      eventIds,
+      order_amount || null
     );
 
     if (!validation.valid) {

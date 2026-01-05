@@ -588,8 +588,9 @@ const validateVoucherForItems = async (code, orderAmount, productIds = [], event
  * @param {string} code - Voucher code
  * @param {Array} productIds - Array of product IDs
  * @param {Array} eventIds - Array of event IDs
+ * @param {number|null} orderAmount - Optional order amount for min_order validation (if provided, uses this instead of calculating from prices)
  */
-const validateVoucherUsage = async (code, productIds = [], eventIds = []) => {
+const validateVoucherUsage = async (code, productIds = [], eventIds = [], orderAmount = null) => {
   try {
     // Find voucher by code
     const voucher = await VoucherRepository.findByCode(code);
@@ -633,8 +634,9 @@ const validateVoucherUsage = async (code, productIds = [], eventIds = []) => {
       };
     }
 
-    // Fetch prices from database and check scoping
-    let totalAmount = 0;
+    // Use provided orderAmount if available, otherwise calculate from prices
+    let totalAmount = orderAmount ? parseFloat(orderAmount) : 0;
+    const useProvidedAmount = orderAmount !== null && orderAmount !== undefined;
     const eligibleProductIds = [];
     const eligibleEventIds = [];
 
@@ -649,13 +651,13 @@ const validateVoucherUsage = async (code, productIds = [], eventIds = []) => {
 
         if (applyToAll || voucherType !== "product") {
           // If apply_to_all or not a product voucher, all products are eligible
-          totalAmount += price;
+          if (!useProvidedAmount) totalAmount += price;
           eligibleProductIds.push(productId);
         } else {
           // Check if this specific product is in voucher scope
           const applies = await VoucherRepository.voucherAppliesToProduct(voucher.id, productId);
           if (applies) {
-            totalAmount += price;
+            if (!useProvidedAmount) totalAmount += price;
             eligibleProductIds.push(productId);
           }
         }
