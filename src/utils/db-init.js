@@ -1211,6 +1211,145 @@ const addProductIdToPurchasesTable = async () => {
   }
 };
 
+// Add fake_quantity columns to products table
+const addFakeQuantityToProductsTable = async () => {
+  try {
+    const dbName = process.env.DB_NAME || "peacetifal_db";
+
+    // Check and add fake_quantity
+    const [fakeQtyRows] = await db.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' 
+       AND COLUMN_NAME = 'fake_quantity'`,
+      [dbName]
+    );
+    if (fakeQtyRows.length === 0) {
+      await db.execute(
+        `ALTER TABLE products ADD COLUMN fake_quantity INT NULL AFTER quantity`
+      );
+      console.log("fake_quantity column added to products table");
+    }
+
+    // Check and add fake_quantity_base (for auto-reset)
+    const [baseRows] = await db.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' 
+       AND COLUMN_NAME = 'fake_quantity_base'`,
+      [dbName]
+    );
+    if (baseRows.length === 0) {
+      await db.execute(
+        `ALTER TABLE products ADD COLUMN fake_quantity_base INT NULL AFTER fake_quantity`
+      );
+      console.log("fake_quantity_base column added to products table");
+    }
+
+    // Check and add fake_quantity_last_edited_at (for tracking manual edits)
+    const [editedRows] = await db.execute(
+      `SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS 
+       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'products' 
+       AND COLUMN_NAME = 'fake_quantity_last_edited_at'`,
+      [dbName]
+    );
+    if (editedRows.length === 0) {
+      await db.execute(
+        `ALTER TABLE products ADD COLUMN fake_quantity_last_edited_at TIMESTAMP NULL AFTER fake_quantity_base`
+      );
+      console.log(
+        "fake_quantity_last_edited_at column added to products table"
+      );
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Error adding fake_quantity columns:", error.message);
+    return false;
+  }
+};
+
+// Create product_alerts table
+const createProductAlertsTable = async () => {
+  const query = `
+    CREATE TABLE IF NOT EXISTS product_alerts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      icon VARCHAR(100) NOT NULL,
+      color VARCHAR(50) NOT NULL,
+      text VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_text (text)
+    )
+  `;
+  try {
+    await db.execute(query);
+    console.log("Product alerts table created or already exists");
+    return true;
+  } catch (error) {
+    console.error("Error creating product_alerts table:", error.message);
+    return false;
+  }
+};
+
+// Create junction table product_product_alerts
+const createProductProductAlertsTable = async () => {
+  const query = `
+    CREATE TABLE IF NOT EXISTS product_product_alerts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      product_id INT NOT NULL,
+      product_alert_id INT NOT NULL,
+      threshold_count INT DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_product_id (product_id),
+      INDEX idx_product_alert_id (product_alert_id),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_alert_id) REFERENCES product_alerts(id) ON DELETE CASCADE,
+      UNIQUE KEY unique_product_alert (product_id, product_alert_id)
+    )
+  `;
+  try {
+    await db.execute(query);
+    console.log(
+      "Product product_alerts junction table created or already exists"
+    );
+    return true;
+  } catch (error) {
+    console.error("Error creating product_product_alerts table:", error.message);
+    return false;
+  }
+};
+
+// Seed default alerts
+const seedDefaultProductAlerts = async () => {
+  try {
+    // Check if table exists first to avoid errors on fresh install if createTable failed
+    const [rows] = await db.execute(
+      "SELECT COUNT(*) as count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'product_alerts'",
+      [process.env.DB_NAME || "peacetifal_db"]
+    );
+
+    if (rows[0].count > 0) {
+      const [existing] = await db.execute(
+        "SELECT COUNT(*) as count FROM product_alerts"
+      );
+      if (existing[0].count === 0) {
+        await db.execute(`
+        INSERT INTO product_alerts (icon, color, text) VALUES
+        ('FaFire', '#FF5722', 'Hot Sale!'),
+        ('FaClock', '#FFC107', 'Limited Time'),
+        ('FaStar', '#4CAF50', 'Best Seller'),
+        ('FaChartLine', '#2196F3', 'Trending'),
+        ('FaExclamationTriangle', '#F44336', 'Almost Sold Out')
+      `);
+        console.log("Default product alerts seeded");
+      }
+    }
+    return true;
+  } catch (error) {
+    console.error("Error seeding default product alerts:", error.message);
+    return false;
+  }
+};
+
 // Update the initializeDatabase function to include the new functions
 const initializeDatabase = async () => {
   console.log("Initializing database...");
@@ -1258,6 +1397,13 @@ const initializeDatabase = async () => {
     await addOriginalAmountToPurchasesTable(); // Add original_amount before voucher discount
     await addQuantityToOrderAddressesTable(); // Add quantity to order_addresses
     await createEventImagesTable(); // Create event images table for unlimited images per event
+
+    // === Product Alerts & Fake Quantity Features ===
+    await addFakeQuantityToProductsTable(); // Add fake_quantity columns to products
+    await createProductAlertsTable(); // Create product_alerts table
+    await createProductProductAlertsTable(); // Create junction table
+    await seedDefaultProductAlerts(); // Seed default alerts
+
 
     console.log("Database initialization completed");
     return true;

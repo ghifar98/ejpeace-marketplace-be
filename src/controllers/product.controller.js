@@ -53,6 +53,15 @@ const createProduct = async (req, res) => {
     // Prepare product data
     const productData = { ...req.body };
 
+    // Parse alerts if it comes as string (FormData)
+    if (productData.alerts && typeof productData.alerts === 'string') {
+      try {
+        productData.alerts = JSON.parse(productData.alerts);
+      } catch (e) {
+        console.error("Failed to parse alerts JSON:", e);
+      }
+    }
+
     // Handle files from different possible field names
     let imageFiles = [];
     if (req.files && Array.isArray(req.files)) {
@@ -148,6 +157,18 @@ const updateProduct = async (req, res) => {
 
     // Prepare update data
     const updateData = { ...req.body };
+
+    // Parse alerts if it comes as string (FormData)
+    if (updateData.alerts && typeof updateData.alerts === 'string') {
+      try {
+        updateData.alerts = JSON.parse(updateData.alerts);
+      } catch (e) {
+        console.error("Failed to parse alerts JSON:", e);
+        // If parse fails, maybe it's just a single ID string or something? 
+        // Better to delete it if invalid or let service fail validation
+        // But let's assume it should be JSON.
+      }
+    }
 
     // Handle files from different possible field names
     let imageFiles = [];

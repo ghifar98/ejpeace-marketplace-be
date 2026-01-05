@@ -1,5 +1,6 @@
 const db = require("../config/db.config");
 const Product = require("./Product.model");
+const ProductProductAlertRepository = require("./productProductAlert.repository");
 
 class ProductRepository {
   // Create a new product
@@ -12,14 +13,18 @@ class ProductRepository {
       category,
       size,
       quantity,
-      image, // Add image parameter
+      image,
+      fake_quantity,
     } = productData;
     const createdAt = new Date();
     const updatedAt = new Date();
 
+    // If fake_quantity is provided, set base as well
+    const fakeQuantityBase = fake_quantity !== undefined ? fake_quantity : null;
+
     const query = `
-      INSERT INTO products (name, description, price, discount_percentage, category, size, quantity, image, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (name, description, price, discount_percentage, category, size, quantity, image, fake_quantity, fake_quantity_base, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     try {
@@ -31,13 +36,14 @@ class ProductRepository {
         category,
         size,
         quantity,
-        JSON.stringify(image || []), // Store images as JSON array
+        JSON.stringify(image || []),
+        fake_quantity !== undefined ? fake_quantity : null,
+        fakeQuantityBase,
         createdAt,
         updatedAt,
       ]);
       return result.insertId;
     } catch (error) {
-      // If it's a connection error, return a special error
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
         throw new Error("Database connection failed");
       }
@@ -48,7 +54,7 @@ class ProductRepository {
   // Find product by ID
   static async findById(id) {
     const query = `
-      SELECT id, name, description, price, discount_percentage, category, size, quantity, image, created_at, updated_at, deleted_at
+      SELECT id, name, description, price, discount_percentage, category, size, quantity, image, fake_quantity, fake_quantity_base, fake_quantity_last_edited_at, created_at, updated_at, deleted_at
       FROM products
       WHERE id = ? AND deleted_at IS NULL
     `;
@@ -57,20 +63,21 @@ class ProductRepository {
       const [rows] = await db.execute(query, [id]);
       if (rows.length === 0) return null;
 
-      // Parse images JSON
       const productData = { ...rows[0] };
       if (productData.image) {
         try {
           productData.image = JSON.parse(productData.image);
         } catch (e) {
-          // If parsing fails, keep as string
           productData.image = [productData.image];
         }
       }
 
+      // Fetch alerts
+      const alerts = await ProductProductAlertRepository.getAlertsForProduct(id);
+      productData.alerts = alerts;
+
       return new Product(productData);
     } catch (error) {
-      // If it's a connection error, return null
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
         console.error("Database connection failed while finding product by ID");
         return null;
@@ -82,7 +89,7 @@ class ProductRepository {
   // Get all products (excluding deleted ones)
   static async findAll() {
     const query = `
-      SELECT id, name, description, price, discount_percentage, category, size, quantity, image, created_at, updated_at
+      SELECT id, name, description, price, discount_percentage, category, size, quantity, image, fake_quantity, fake_quantity_base, fake_quantity_last_edited_at, created_at, updated_at
       FROM products
       WHERE deleted_at IS NULL
       ORDER BY created_at DESC
@@ -90,21 +97,28 @@ class ProductRepository {
 
     try {
       const [rows] = await db.execute(query);
-      return rows.map((row) => {
-        // Parse images JSON
+
+      const products = await Promise.all(rows.map(async (row) => {
         const productData = { ...row };
         if (productData.image) {
           try {
             productData.image = JSON.parse(productData.image);
           } catch (e) {
-            // If parsing fails, keep as string
             productData.image = [productData.image];
           }
         }
+
+        // Fetch alerts for each product
+        // Note: For high traffic, this should be optimized to a single JOIN query, 
+        // but for now keeping it simple as per architecture.
+        const alerts = await ProductProductAlertRepository.getAlertsForProduct(row.id);
+        productData.alerts = alerts;
+
         return new Product(productData);
-      });
+      }));
+
+      return products;
     } catch (error) {
-      // If it's a connection error, return empty array
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
         console.error("Database connection failed while fetching all products");
         return [];
@@ -124,6 +138,7 @@ class ProductRepository {
       "size",
       "quantity",
       "image",
+      "fake_quantity"
     ];
     const updates = [];
     const values = [];
@@ -132,9 +147,19 @@ class ProductRepository {
     for (const field of allowedFields) {
       if (productData[field] !== undefined) {
         if (field === "image") {
-          // Handle images as JSON array
           updates.push(`${field} = ?`);
           values.push(JSON.stringify(productData[field] || []));
+        } else if (field === "fake_quantity") {
+          // Handle fake_quantity logic
+          updates.push(`fake_quantity = ?`);
+          values.push(productData[field]);
+
+          // Also update base and last_edited_at
+          updates.push(`fake_quantity_base = ?`);
+          values.push(productData[field]);
+
+          updates.push(`fake_quantity_last_edited_at = ?`);
+          values.push(new Date());
         } else {
           updates.push(`${field} = ?`);
           values.push(productData[field]);
@@ -164,7 +189,6 @@ class ProductRepository {
       const [result] = await db.execute(query, values);
       return result.affectedRows > 0;
     } catch (error) {
-      // If it's a connection error, return false
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
         console.error("Database connection failed while updating product");
         return false;
@@ -187,7 +211,6 @@ class ProductRepository {
       const [result] = await db.execute(query, [deletedAt, id]);
       return result.affectedRows > 0;
     } catch (error) {
-      // If it's a connection error, return false
       if (error.code === "ECONNREFUSED" || error.code === "ENOTFOUND") {
         console.error("Database connection failed while deleting product");
         return false;
@@ -195,6 +218,7 @@ class ProductRepository {
       throw error;
     }
   }
+
   // Transactional update quantity with strict check
   static async updateQuantityWithConnection(id, quantityToReduce, connection) {
     const query = `

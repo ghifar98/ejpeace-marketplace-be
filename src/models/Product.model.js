@@ -10,6 +10,11 @@ class Product {
     this.category = data.category;
     this.size = data.size || null; // Size attribute (S, M, L, etc.)
     this.quantity = data.quantity || 0; // Stock quantity
+    this.fake_quantity = data.fake_quantity !== undefined ? data.fake_quantity : null;
+    this.fake_quantity_base = data.fake_quantity_base !== undefined ? data.fake_quantity_base : null;
+    this.fake_quantity_last_edited_at = data.fake_quantity_last_edited_at || null;
+    this.alerts = data.alerts || [];
+
     // Handle both single image (string) and multiple images (array)
     if (Array.isArray(data.image)) {
       this.image = data.image;
@@ -48,6 +53,14 @@ class Product {
       errors.push("Quantity must be a non-negative number");
     }
 
+    // Validate fake_quantity if present
+    if (
+      this.fake_quantity !== null &&
+      (isNaN(this.fake_quantity) || this.fake_quantity < 0)
+    ) {
+      errors.push("Fake quantity must be a non-negative number");
+    }
+
     return errors;
   }
 
@@ -84,6 +97,10 @@ class Product {
       category: this.category,
       size: this.size,
       quantity: this.quantity,
+      fake_quantity: this.fake_quantity,
+      fake_quantity_base: this.fake_quantity_base,
+      fake_quantity_last_edited_at: this.fake_quantity_last_edited_at,
+      alerts: this.alerts,
       // Include images array or null if empty
       images: this.image && this.image.length > 0 ? this.image : null,
       created_at: this.created_at,

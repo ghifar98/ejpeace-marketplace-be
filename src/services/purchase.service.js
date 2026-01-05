@@ -969,6 +969,21 @@ const handleInvoiceCallback = async (callbackData) => {
 
               if (stockReduced) {
                 console.log(`[Invoice Callback] 📉 Stock reduced for product ${item.product_id}`);
+
+                // === FAKE QUANTITY REDUCTION ===
+                if (product.fake_quantity !== null && product.fake_quantity > 0) {
+                  let newFakeQty = Math.max(0, product.fake_quantity - item.quantity);
+                  // Auto-reset if base > 0 and we hit 0 AND it hasn't been manually edited
+                  if (newFakeQty === 0 && product.fake_quantity_base > 0 && !product.fake_quantity_last_edited_at) {
+                    newFakeQty = product.fake_quantity_base;
+                    console.log(`[Invoice Callback] 🔄 Fake quantity auto-reset: 0 -> ${newFakeQty}`);
+                  }
+                  await connection.execute(
+                    "UPDATE products SET fake_quantity = ? WHERE id = ?",
+                    [newFakeQty, item.product_id]
+                  );
+                  console.log(`[Invoice Callback] 📉 Fake quantity updated: ${product.fake_quantity} -> ${newFakeQty}`);
+                }
               } else {
                 console.error(`[Invoice Callback] ❌ Insufficient stock for product ${item.product_id} (Requested: ${item.quantity})`);
                 const error = new Error(`Insufficient stock for product ${item.product_id}`);
@@ -1014,6 +1029,21 @@ const handleInvoiceCallback = async (callbackData) => {
 
             if (stockReduced) {
               console.log(`[Invoice Callback] 📉 Direct purchase stock reduced by ${quantity}`);
+
+              // === FAKE QUANTITY REDUCTION ===
+              if (product.fake_quantity !== null && product.fake_quantity > 0) {
+                let newFakeQty = Math.max(0, product.fake_quantity - quantity);
+                // Auto-reset if base > 0 and we hit 0 AND it hasn't been manually edited
+                if (newFakeQty === 0 && product.fake_quantity_base > 0 && !product.fake_quantity_last_edited_at) {
+                  newFakeQty = product.fake_quantity_base;
+                  console.log(`[Invoice Callback] 🔄 Fake quantity auto-reset: 0 -> ${newFakeQty}`);
+                }
+                await connection.execute(
+                  "UPDATE products SET fake_quantity = ? WHERE id = ?",
+                  [newFakeQty, lockedPurchase.product_id]
+                );
+                console.log(`[Invoice Callback] 📉 Fake quantity updated: ${product.fake_quantity} -> ${newFakeQty}`);
+              }
             } else {
               console.error(`[Invoice Callback] ❌ Insufficient stock for direct purchase (Product: ${lockedPurchase.product_id})`);
               const error = new Error(`Insufficient stock for product ${lockedPurchase.product_id}`);

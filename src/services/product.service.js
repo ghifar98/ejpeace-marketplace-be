@@ -1,4 +1,5 @@
 const ProductRepository = require("../models/product.repository");
+const ProductProductAlertRepository = require("../models/productProductAlert.repository");
 const { imageExists } = require("../middleware/image.middleware");
 const Product = require("../models/Product.model");
 
@@ -64,22 +65,18 @@ const createProduct = async (productData) => {
       size: product.size,
       quantity: product.quantity,
       image: product.image, // Add images to the data sent to repository
+      fake_quantity: product.fake_quantity,
     });
 
+    // Assign alerts if provided
+    if (productData.alerts && productData.alerts.length > 0) {
+      await ProductProductAlertRepository.assignAlerts(productId, productData.alerts);
+    }
+
     // Return product data
-    return {
-      id: productId,
-      name: product.name,
-      description: product.description,
-      price: product.price,
-      discount_percentage: product.discount_percentage,
-      discounted_price: product.getDiscountedPrice(),
-      category: product.category,
-      size: product.size,
-      quantity: product.quantity,
-      images: product.image, // Include images in the response
-      created_at: product.created_at,
-    };
+    // Fetch fresh to get everything including alerts
+    const freshProduct = await getProductById(productId);
+    return freshProduct;
   } catch (error) {
     if (error.message === "Database connection failed") {
       throw new Error("Service unavailable. Please try again later.");
@@ -145,6 +142,7 @@ const updateProduct = async (id, productData) => {
       category: product.category,
       size: product.size,
       quantity: product.quantity,
+      fake_quantity: product.fake_quantity,
     };
 
     // Only update image if it's provided in the input
@@ -154,8 +152,14 @@ const updateProduct = async (id, productData) => {
 
     // Update product
     const updated = await ProductRepository.update(id, updatePayload);
-    if (!updated) {
-      throw new Error("Failed to update product");
+
+    // Update alerts if provided
+    // Note: To clear all alerts, backend expects an empty array []
+    if (productData.alerts !== undefined) {
+      await ProductProductAlertRepository.assignAlerts(id, productData.alerts);
+    } else if (updated === false && productData.alerts === undefined) {
+      // If nothing updated in product table AND no alerts change
+      // We might still return the product
     }
 
     // Return updated product

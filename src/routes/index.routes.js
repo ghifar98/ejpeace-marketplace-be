@@ -20,6 +20,7 @@ const invoiceRoutes = require("./invoice.routes");
 const paymentCallbackRoutes = require("./paymentCallback.routes");
 const debugRoutes = require("./debug.routes");
 const testRoutes = require("./test.routes");
+const productAlertRoutes = require("./productAlert.route");
 
 // Main route
 router.get("/", indexController.index);
@@ -41,5 +42,6 @@ router.use("/v1/invoices", invoiceRoutes);
 router.use("/v1/payments", paymentCallbackRoutes);
 router.use("/v1/debug", debugRoutes);
 router.use("/v1/test", testRoutes);
+router.use("/v1/product-alerts", productAlertRoutes);
 
 module.exports = router;
